@@ -7,7 +7,7 @@ require('dotenv').config()
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 
 
@@ -35,19 +35,37 @@ async function run() {
     const database = client.db(process.env.DB_NAME);
     const opportunitiesCollection = database.collection("opportunities");
 
+    app.get("/api/opportunities", async (req, res) => {
+      const query = {};
+      if(req.query.companyId){
+        query.companyId = req.query.companyId
+      }
+      if(req.query.status){
+        query.status = req.query.status
+      }
+      const result = await opportunitiesCollection.find(query).toArray();
+      res.send(result);
+    });
+    app.get("/api/opportunities/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await opportunitiesCollection.findOne(query);
+      res.send(result);
+    });
     
     app.post("/api/opportunities", async (req, res) => {
       const opportunity = req.body;
       const result = await opportunitiesCollection.insertOne(opportunity);
       res.send(result);
     });
+    
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
-    await client.close();
+    // await client.close();
   }
 }
 run().catch(console.dir);
