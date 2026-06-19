@@ -1,7 +1,12 @@
 const express = require('express');
+const cors = require('cors');
 const app = express()
 const port = 5000
 require('dotenv').config()
+
+app.use(cors());
+app.use(express.json());
+
 const { MongoClient, ServerApiVersion } = require('mongodb');
 
 
@@ -31,7 +36,11 @@ async function run() {
     const opportunitiesCollection = database.collection("opportunities");
 
     
-
+    app.post("/api/opportunities", async (req, res) => {
+      const opportunity = req.body;
+      const result = await opportunitiesCollection.insertOne(opportunity);
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
