@@ -34,7 +34,7 @@ async function run() {
     const userCollection = database.collection("user");
     const applicationCollection = database.collection("application");
 
-    app.get("/api/users", async (req, res) => {
+    app.get("/api/user", async (req, res) => {
       const result = await userCollection.find().skip(2).toArray();
       res.send(result);
     });
@@ -91,7 +91,16 @@ async function run() {
         const cursor = opportunitiesCollection.find(query).limit(3).sort({ createdAt: -1 });
         const result = await cursor.toArray();
         res.send(result);
-      })
+    });
+
+    app.get("/api/my/opportunities", async (req, res) => {
+      const query = {};
+      if (req.query.founderId) {
+        query.founderId = req.query.founderId;
+      }
+      const result = await opportunitiesCollection.find(query).toArray();
+      res.send(result);
+    })
 
     app.get("/api/opportunities/:id", async (req, res) => {
       const id = req.params.id;
@@ -151,6 +160,17 @@ async function run() {
 
 
     //application related Api
+    app.get("/api/applications", async (req, res) => {
+      const query = {};
+      if (req.query.opportunityId) {
+        query.opportunityId = req.query.opportunityId;
+      }
+      if (req.query.applicantId) {
+        query.applicantId = req.query.applicantId;
+      }
+      const result = await applicationCollection.find(query).toArray();
+      res.send(result);
+    })
     app.post("/api/applications", async (req, res) => {
       const application = req.body;
       const newApplication = {
