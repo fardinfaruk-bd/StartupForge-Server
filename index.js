@@ -33,6 +33,8 @@ async function run() {
     const startupCollection = database.collection("startup");
     const userCollection = database.collection("user");
     const applicationCollection = database.collection("application");
+    const plansCollection = database.collection("plans");
+    const paymentCollection = database.collection("payment");
 
     app.get("/api/user", async (req, res) => {
       const result = await userCollection.find().skip(2).toArray();
@@ -92,6 +94,18 @@ async function run() {
         const result = await cursor.toArray();
         res.send(result);
     });
+
+    app.get("/api/manage/opportunities", async (req, res) => {
+      const query = {}
+      if(req.query.startupId){
+        query.startupId = req.query.startupId;
+      }
+      if(req.query.status){
+        query.status = req.query.status;
+      }
+      const result = await opportunitiesCollection.find(query).toArray();
+      res.send(result);
+    })
 
     app.get("/api/my/opportunities", async (req, res) => {
       const query = {};
@@ -179,6 +193,37 @@ async function run() {
       }
       const result = await applicationCollection.insertOne(newApplication);
       res.send(result);
+    })
+
+
+    // plans related Api
+    app.get("/api/plans", async (req, res) => {
+      const query = {};
+      if(req.query.plan_id){
+        query.id = req.query.plan_id;
+      }
+      const plan = await plansCollection.findOne(query);
+      res.send(plan);
+    });
+
+
+    //payment related Api
+    app.post("/api/payment", async (req, res) => {
+      const payment = req.body;
+      const newPayment = {
+        ...payment,
+        createdAt: new Date(),
+      }
+      const result = await paymentCollection.insertOne(newPayment);
+
+      const filter = { email: payment.email };
+      const updateDoc = {
+        $set: {
+          plan: payment.planId
+        },
+      };
+      const updatedResult = await userCollection.updateOne(filter, updateDoc);
+      res.send(updatedResult);
     })
 
     // Send a ping to confirm a successful connection
