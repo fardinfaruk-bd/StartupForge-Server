@@ -118,9 +118,15 @@ async function run() {
 
     app.get("/api/opportunities/:id", async (req, res) => {
       const id = req.params.id;
+      if(id.length !== 24){
+       return  res.json({ok:false})
+      }
       const query = { _id: new ObjectId(id) };
       const result = await opportunitiesCollection.findOne(query);
-      res.send(result);
+      if(!result){
+        return res.json({ok:false})
+      }
+      res.json(result);
     });
 
     app.post("/api/opportunities", async (req, res) => {
@@ -153,6 +159,7 @@ async function run() {
       const result = await startupCollection.find().skip(1).toArray();
       res.send(result);
     });
+
     app.get("/api/my/startup", async (req, res) => {
       const query = {};
       if (req.query.founderId) {
@@ -162,13 +169,26 @@ async function run() {
 
       res.send(result || {});
     });
+
     app.post("/api/startup", async (req, res) => {
       const startup = req.body;
       const newStartup = {
-        ...company,
+        ...startup,
         createdAt: new Date(),
       };
       const result = await startupCollection.insertOne(newStartup);
+      res.send(result);
+    });
+
+    app.patch("/api/startup/:id", async (req, res) => {
+      const { id } = req.params;
+      const updatedStartup = req.body;
+
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: updatedStartup,
+      };
+      const result = await startupCollection.updateOne(query, updateDoc);
       res.send(result);
     });
 
