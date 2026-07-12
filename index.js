@@ -67,7 +67,6 @@ async function run() {
         query.status = req.query.status;
       }
 
-      
       // pagination related work
       if (req.query.page) {
         const page = req.query.page;
@@ -89,23 +88,26 @@ async function run() {
     });
 
     app.get("/api/open/opportunities", async (req, res) => {
-        const query = { status: "active" };
-        const cursor = opportunitiesCollection.find(query).limit(3).sort({ createdAt: -1 });
-        const result = await cursor.toArray();
-        res.send(result);
+      const query = { status: "active" };
+      const cursor = opportunitiesCollection
+        .find(query)
+        .limit(3)
+        .sort({ createdAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
     });
 
     app.get("/api/manage/opportunities", async (req, res) => {
-      const query = {}
-      if(req.query.startupId){
+      const query = {};
+      if (req.query.startupId) {
         query.startupId = req.query.startupId;
       }
-      if(req.query.status){
+      if (req.query.status) {
         query.status = req.query.status;
       }
       const result = await opportunitiesCollection.find(query).toArray();
       res.send(result);
-    })
+    });
 
     app.get("/api/my/opportunities", async (req, res) => {
       const query = {};
@@ -114,17 +116,17 @@ async function run() {
       }
       const result = await opportunitiesCollection.find(query).toArray();
       res.send(result);
-    })
+    });
 
     app.get("/api/opportunities/:id", async (req, res) => {
       const id = req.params.id;
-      if(id.length !== 24){
-       return  res.json({ok:false})
+      if (id.length !== 24) {
+        return res.json({ ok: false });
       }
       const query = { _id: new ObjectId(id) };
       const result = await opportunitiesCollection.findOne(query);
-      if(!result){
-        return res.json({ok:false})
+      if (!result) {
+        return res.json({ ok: false });
       }
       res.json(result);
     });
@@ -192,7 +194,6 @@ async function run() {
       res.send(result);
     });
 
-
     //application related Api
     app.get("/api/applications", async (req, res) => {
       const query = {};
@@ -202,30 +203,50 @@ async function run() {
       if (req.query.applicantId) {
         query.applicantId = req.query.applicantId;
       }
+      if (req.query.founderId) {
+        query.founderId = req.query.founderId;
+      }
       const result = await applicationCollection.find(query).toArray();
       res.send(result);
-    })
+    });
     app.post("/api/applications", async (req, res) => {
       const application = req.body;
       const newApplication = {
         ...application,
         applied_at: new Date(),
-      }
+      };
       const result = await applicationCollection.insertOne(newApplication);
       res.send(result);
-    })
+    });
 
+    app.patch("/api/applications/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updatedApplication = req.body;
+        const filter = { _id: new ObjectId(id) };
+
+        const updateDoc = {
+          $set: {
+            Status: updatedApplication.status, 
+          },
+        };
+
+        const result = await applicationCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to update application" });
+      }
+    });
 
     // plans related Api
     app.get("/api/plans", async (req, res) => {
       const query = {};
-      if(req.query.plan_id){
+      if (req.query.plan_id) {
         query.id = req.query.plan_id;
       }
       const plan = await plansCollection.findOne(query);
       res.send(plan);
     });
-
 
     //payment related Api
     app.post("/api/payment", async (req, res) => {
@@ -233,18 +254,18 @@ async function run() {
       const newPayment = {
         ...payment,
         createdAt: new Date(),
-      }
+      };
       const result = await paymentCollection.insertOne(newPayment);
 
       const filter = { email: payment.email };
       const updateDoc = {
         $set: {
-          plan: payment.planId
+          plan: payment.planId,
         },
       };
       const updatedResult = await userCollection.updateOne(filter, updateDoc);
       res.send(updatedResult);
-    })
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
