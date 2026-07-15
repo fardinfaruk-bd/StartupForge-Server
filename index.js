@@ -36,10 +36,22 @@ async function run() {
     const plansCollection = database.collection("plans");
     const paymentCollection = database.collection("payment");
 
-    app.get("/api/user", async (req, res) => {
+    app.get("/api/users", async (req, res) => {
       const result = await userCollection.find().skip(2).toArray();
       res.send(result);
     });
+
+    app.patch("/api/users/:id", async (req, res) => {
+      const id  = req.params.id;
+      const updatedUser = req.body;
+
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: updatedUser,
+      };
+      const result = await userCollection.updateOne(query, updateDoc);
+      res.send(result);
+    })
 
     //opportunities related Api
     app.get("/api/opportunities", async (req, res) => {
