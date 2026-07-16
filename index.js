@@ -170,7 +170,11 @@ async function run() {
 
     //startup related Api
     app.get("/api/startups", async (req, res) => {
-      const result = await startupCollection.find().skip(1).toArray();
+      const result = await startupCollection.find().toArray();
+      res.send(result);
+    });
+    app.get("/api/active/startups", async (req, res) => {
+      const result = await startupCollection.find({ status: "Active" }).toArray();
       res.send(result);
     });
 
@@ -205,6 +209,21 @@ async function run() {
       const result = await startupCollection.updateOne(query, updateDoc);
       res.send(result);
     });
+
+    app.patch("/api/startup/status/:id", async (req, res) => {
+      const id  = req.params.id;
+      const updatedStatus = req.body;
+
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status: updatedStatus.status,
+        },
+      };
+      const result = await startupCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+    
 
     //application related Api
     app.get("/api/applications", async (req, res) => {
