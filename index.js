@@ -41,8 +41,15 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/api/users/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await userCollection.findOne(query);
+      res.send(result);
+    });
+
     app.patch("/api/users/:id", async (req, res) => {
-      const id  = req.params.id;
+      const id = req.params.id;
       const updatedUser = req.body;
 
       const query = { _id: new ObjectId(id) };
@@ -51,7 +58,7 @@ async function run() {
       };
       const result = await userCollection.updateOne(query, updateDoc);
       res.send(result);
-    })
+    });
 
     //opportunities related Api
     app.get("/api/opportunities", async (req, res) => {
@@ -170,11 +177,45 @@ async function run() {
 
     //startup related Api
     app.get("/api/startups", async (req, res) => {
-      const result = await startupCollection.find().toArray();
+      console.log("server side q", req.query);
+      const query = {};
+      if (req.query.search) {
+        query.$or = [
+          { name: { $regex: req.query.search, $options: "i" } },
+          { industry: { $regex: req.query.search, $options: "i" } },
+        ];
+      }
+      // pagination related work
+      if (req.query.page) {
+        const page = req.query.page;
+        const perPage = req.query.perPage || 12;
+        const skipItems = (page - 1) * perPage;
+
+        const newQuery = { ...query, status: "approved" };
+
+        const total = await startupCollection.countDocuments(newQuery);
+        const cursor = startupCollection
+          .find(newQuery)
+          .skip(skipItems)
+          .limit(perPage);
+        const startups = await cursor.toArray();
+        return res.send({ total, startups });
+      }
+
+      const cursor = startupCollection.find(query);
+      const result = await cursor.toArray();
       res.send(result);
     });
+
     app.get("/api/active/startups", async (req, res) => {
-      const result = await startupCollection.find({ status: "Active" }).toArray();
+      const result = await startupCollection
+        .find({ status: "Active" })
+        .toArray();
+      res.send(result);
+    });
+
+    app.get("/api/startups/featured", async (req, res) => {
+      const result = await startupCollection.find().limit(3).toArray();
       res.send(result);
     });
 
@@ -211,7 +252,7 @@ async function run() {
     });
 
     app.patch("/api/startup/status/:id", async (req, res) => {
-      const id  = req.params.id;
+      const id = req.params.id;
       const updatedStatus = req.body;
 
       const query = { _id: new ObjectId(id) };
@@ -223,7 +264,6 @@ async function run() {
       const result = await startupCollection.updateOne(query, updateDoc);
       res.send(result);
     });
-    
 
     //application related Api
     app.get("/api/applications", async (req, res) => {
@@ -258,7 +298,7 @@ async function run() {
 
         const updateDoc = {
           $set: {
-            Status: updatedApplication.status, 
+            Status: updatedApplication.status,
           },
         };
 
