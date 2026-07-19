@@ -14,7 +14,6 @@ app.get("/", (req, res) => {
 });
 
 const uri = process.env.MONGO_DB_URI;
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -214,7 +213,20 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/startups/featured", async (req, res) => {
+    app.get("/api/startups/:id", async (req, res) => {
+      const id = req.params.id;
+      if (id.length !== 24) {
+        return res.json({ ok: false });
+      }
+      const query = { _id: new ObjectId(id) };
+      const result = await startupCollection.findOne(query);
+      if (!result) {
+        return res.json({ ok: false });
+      }
+      res.json(result);
+    })
+
+    app.get("/api/featured/startups", async (req, res) => {
       const result = await startupCollection.find().limit(3).toArray();
       res.send(result);
     });
@@ -337,6 +349,9 @@ async function run() {
       const updatedResult = await userCollection.updateOne(filter, updateDoc);
       res.send(updatedResult);
     });
+
+    //aggregation related Api
+    
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
