@@ -224,7 +224,7 @@ async function run() {
         return res.json({ ok: false });
       }
       res.json(result);
-    })
+    });
 
     app.get("/api/featured/startups", async (req, res) => {
       const result = await startupCollection.find().limit(3).toArray();
@@ -351,7 +351,521 @@ async function run() {
     });
 
     //aggregation related Api
-    
+
+    app.get("/api/states", async (req, res) => {
+      try {
+        const { role, userId, email } = req.query;
+
+        if (!role) {
+          return res.status(400).json({ error: "Role is required" });
+        }
+
+        // Date Range Helpers
+        const now = new Date();
+        const startOfCurrentMonth = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          1,
+        );
+        const startOfPreviousMonth = new Date(
+          now.getFullYear(),
+          now.getMonth() - 1,
+          1,
+        );
+        const endOfPreviousMonth = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999,
+        );
+
+        
+        // FOUNDER STATS (NO startupId NEEDED)
+        
+        if (role === "founder") {
+          if (!userId) {
+            return res
+              .status(400)
+              .json({ error: "userId is required for founder stats" });
+          }
+
+          let userObjId;
+          try {
+            userObjId = new ObjectId(userId);
+          } catch (err) {
+            return res.status(400).json({ error: "Invalid userId format" });
+          }
+
+          
+          const user = await userCollection.findOne({ _id: userObjId });
+          const planDetails = await plansCollection.findOne({
+            id: user?.plan || "founder_free",
+          });
+
+          
+          const opportunityStats = await opportunitiesCollection
+            .aggregate([
+              { $match: { founderId: userId } },
+              {
+                $group: {
+                  _id: null,
+                  totalOpportunities: { $sum: 1 },
+                  activeOpportunities: {
+                    $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] },
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          
+          const applicationStats = await applicationCollection
+            .aggregate([
+              { $match: { founderId: userId } },
+              {
+                $group: {
+                  _id: null,
+                  totalApplications: { $sum: 1 },
+                  acceptedApplications: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$Status", "$status"] } },
+                            ["accepted", "approved"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  rejectedApplications: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$Status", "$status"] } },
+                            ["rejected", "declined"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  pendingApplications: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$Status", "$status"] } },
+                            ["pending", "submitted"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  applicationsThisMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $gte: [
+                            {
+                              $toDate: {
+                                $ifNull: ["$applied_at", "$appliedAt"],
+                              },
+                            },
+                            startOfCurrentMonth,
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  applicationsPreviousMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $gte: [
+                                {
+                                  $toDate: {
+                                    $ifNull: ["$applied_at", "$appliedAt"],
+                                  },
+                                },
+                                startOfPreviousMonth,
+                              ],
+                            },
+                            {
+                              $lte: [
+                                {
+                                  $toDate: {
+                                    $ifNull: ["$applied_at", "$appliedAt"],
+                                  },
+                                },
+                                endOfPreviousMonth,
+                              ],
+                            },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          const opps = opportunityStats[0] || {
+            totalOpportunities: 0,
+            activeOpportunities: 0,
+          };
+          const apps = applicationStats[0] || {
+            totalApplications: 0,
+            acceptedApplications: 0,
+            rejectedApplications: 0,
+            pendingApplications: 0,
+            applicationsThisMonth: 0,
+            applicationsPreviousMonth: 0,
+          };
+
+          const maxAllowed = planDetails?.maxOpportunities || 3;
+
+          const stats = {
+            totalOpportunities: opps.totalOpportunities,
+            activeOpportunities: opps.activeOpportunities,
+            totalApplications: apps.totalApplications,
+            acceptedApplications: apps.acceptedApplications,
+            rejectedApplications: apps.rejectedApplications,
+            pendingApplications: apps.pendingApplications,
+            applicationsThisMonth: apps.applicationsThisMonth,
+            applicationsPreviousMonth: apps.applicationsPreviousMonth,
+            plan: user?.plan || "founder_free",
+            maxOpportunities: maxAllowed,
+            remainingOpportunities: Math.max(
+              0,
+              maxAllowed - opps.totalOpportunities,
+            ),
+          };
+
+          return res.status(200).json({ success: true, role, stats });
+        }
+
+        // APPLICANT / CONTRIBUTOR STATS
+        
+        if (role === "contributor") {
+          if (!userId && !email) {
+            return res.status(400).json({
+              error: "userId or email is required for applicant stats",
+            });
+          }
+
+          const matchCriteria = [];
+          if (userId) matchCriteria.push({ applicantId: userId });
+          if (email) matchCriteria.push({ Applicant_email: email });
+
+          const applicantStats = await applicationCollection
+            .aggregate([
+              { $match: { $or: matchCriteria } },
+              {
+                $group: {
+                  _id: null,
+                  totalApplied: { $sum: 1 },
+                  accepted: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$status", "$Status"] } },
+                            ["accepted", "approved"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  rejected: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$status", "$Status"] } },
+                            ["rejected", "declined"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  pending: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $in: [
+                            { $toLower: { $ifNull: ["$status", "$Status"] } },
+                            ["pending", "submitted"],
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  totalApplicationInThisMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $gte: [
+                            {
+                              $toDate: {
+                                $ifNull: ["$applied_at", "$appliedAt"],
+                              },
+                            },
+                            startOfCurrentMonth,
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  totalApplicationProviousMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $gte: [
+                                {
+                                  $toDate: {
+                                    $ifNull: ["$applied_at", "$appliedAt"],
+                                  },
+                                },
+                                startOfPreviousMonth,
+                              ],
+                            },
+                            {
+                              $lte: [
+                                {
+                                  $toDate: {
+                                    $ifNull: ["$applied_at", "$appliedAt"],
+                                  },
+                                },
+                                endOfPreviousMonth,
+                              ],
+                            },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  totalApplicationOtherMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $lt: [
+                            {
+                              $toDate: {
+                                $ifNull: ["$applied_at", "$appliedAt"],
+                              },
+                            },
+                            startOfPreviousMonth,
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  totalApplied: 1,
+                  accepted: 1,
+                  rejected: 1,
+                  pending: 1,
+                  totalApplicationInThisMonth: 1,
+                  totalApplicationProviousMonth: 1,
+                  totalApplicationOtherMonth: 1,
+                },
+              },
+            ])
+            .toArray();
+
+          const stats = applicantStats[0] || {
+            totalApplied: 0,
+            accepted: 0,
+            rejected: 0,
+            pending: 0,
+            totalApplicationInThisMonth: 0,
+            totalApplicationProviousMonth: 0,
+            totalApplicationOtherMonth: 0,
+          };
+
+          return res.status(200).json({ success: true, role, stats });
+        }
+
+        
+        // ADMIN STATS
+        
+        if (role === "admin") {
+          const totalUsers = await userCollection.countDocuments();
+          const totalStartups = await startupsCollection.countDocuments({
+            status: "approved",
+          });
+          const totalOpportunities =
+            await opportunitiesCollection.countDocuments({ status: "active" });
+          const totalApplications =
+            await applicationCollection.countDocuments();
+
+          const userRegistrationData = await userCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: null,
+                  registeredThisMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $gte: [
+                            { $toDate: "$createdAt" },
+                            startOfCurrentMonth,
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                  registeredPreviousMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $gte: [
+                                { $toDate: "$createdAt" },
+                                startOfPreviousMonth,
+                              ],
+                            },
+                            {
+                              $lte: [
+                                { $toDate: "$createdAt" },
+                                endOfPreviousMonth,
+                              ],
+                            },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          const revenueData = await paymentCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: null,
+                  totalRevenue: { $sum: "$price" },
+                  revenueThisMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $gte: [
+                            { $toDate: "$createdAt" },
+                            startOfCurrentMonth,
+                          ],
+                        },
+                        "$price",
+                        0,
+                      ],
+                    },
+                  },
+                  revenuePreviousMonth: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $gte: [
+                                { $toDate: "$createdAt" },
+                                startOfPreviousMonth,
+                              ],
+                            },
+                            {
+                              $lte: [
+                                { $toDate: "$createdAt" },
+                                endOfPreviousMonth,
+                              ],
+                            },
+                          ],
+                        },
+                        "$price",
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            ])
+            .toArray();
+
+          const usersMeta = userRegistrationData[0] || {
+            registeredThisMonth: 0,
+            registeredPreviousMonth: 0,
+          };
+          const revMeta = revenueData[0] || {
+            totalRevenue: 0,
+            revenueThisMonth: 0,
+            revenuePreviousMonth: 0,
+          };
+
+          return res.status(200).json({
+            success: true,
+            role,
+            stats: {
+              totalUsers,
+              registeredUsersThisMonth: usersMeta.registeredThisMonth,
+              registeredUsersPreviousMonth: usersMeta.registeredPreviousMonth,
+              totalStartups,
+              totalOpportunities,
+              totalApplications,
+              totalRevenue: revMeta.totalRevenue,
+              revenueThisMonth: revMeta.revenueThisMonth,
+              revenuePreviousMonth: revMeta.revenuePreviousMonth,
+            },
+          });
+        }
+
+        return res.status(400).json({ error: "Invalid role provided" });
+      } catch (error) {
+        console.error("Error generating state metrics:", error);
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error", details: error.message });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
