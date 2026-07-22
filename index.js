@@ -332,6 +332,10 @@ async function run() {
     });
 
     //payment related Api
+    app.get("/api/payment", async (req, res) => {
+      const result = await paymentCollection.find().toArray();
+      res.send(result);
+    });
     app.post("/api/payment", async (req, res) => {
       const payment = req.body;
       const newPayment = {
@@ -382,9 +386,6 @@ async function run() {
           999,
         );
 
-        
-        // FOUNDER STATS (NO startupId NEEDED)
-        
         if (role === "founder") {
           if (!userId) {
             return res
@@ -399,13 +400,11 @@ async function run() {
             return res.status(400).json({ error: "Invalid userId format" });
           }
 
-          
           const user = await userCollection.findOne({ _id: userObjId });
           const planDetails = await plansCollection.findOne({
             id: user?.plan || "founder_free",
           });
 
-          
           const opportunityStats = await opportunitiesCollection
             .aggregate([
               { $match: { founderId: userId } },
@@ -421,7 +420,6 @@ async function run() {
             ])
             .toArray();
 
-          
           const applicationStats = await applicationCollection
             .aggregate([
               { $match: { founderId: userId } },
@@ -562,7 +560,7 @@ async function run() {
         }
 
         // APPLICANT / CONTRIBUTOR STATS
-        
+
         if (role === "contributor") {
           if (!userId && !email) {
             return res.status(400).json({
@@ -721,12 +719,11 @@ async function run() {
           return res.status(200).json({ success: true, role, stats });
         }
 
-        
         // ADMIN STATS
-        
+
         if (role === "admin") {
           const totalUsers = await userCollection.countDocuments();
-          const totalStartups = await startupsCollection.countDocuments({
+          const totalStartups = await startupCollection.countDocuments({
             status: "approved",
           });
           const totalOpportunities =
@@ -864,6 +861,137 @@ async function run() {
         return res
           .status(500)
           .json({ error: "Internal Server Error", details: error.message });
+      }
+    });
+
+    app.get("/api/stats/public", async (req, res) => {
+      try {
+        // 1. Fetch Startup Statistics
+        const startupStats = await startupCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalStartups: { $sum: 1 },
+                activeStartups: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$status", ""] } },
+                          ["approved", "active"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        // 2. Fetch Application Statistics
+        const applicationStats = await applicationCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalApplications: { $sum: 1 },
+                acceptedApplications: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$status", "$Status"] } },
+                          ["accepted", "approved"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        // 3. Fetch Opportunity Statistics
+        const opportunityStats = await opportunitiesCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalOpportunities: { $sum: 1 },
+                activeOpportunities: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $eq: [
+                          { $toLower: { $ifNull: ["$status", ""] } },
+                          "active",
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        // 4. Fetch Total Revenue / Funding Raised from Payment Collection
+        const paymentStats = await paymentCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                // Adjust "$price" if your field name is different (e.g., "$amount")
+                totalFundingRaised: { $sum: { $ifNull: ["$price", 0] } },
+              },
+            },
+          ])
+          .toArray();
+
+        // Extract aggregated results or fall back to 0 if collections are empty
+        const startupData = startupStats[0] || {
+          totalStartups: 0,
+          activeStartups: 0,
+        };
+        const appData = applicationStats[0] || {
+          totalApplications: 0,
+          acceptedApplications: 0,
+        };
+        const oppData = opportunityStats[0] || {
+          totalOpportunities: 0,
+          activeOpportunities: 0,
+        };
+        const payData = paymentStats[0] || { totalFundingRaised: 0 };
+
+        // Construct the public response object
+        return res.status(200).json({
+          success: true,
+          stats: {
+            totalStartups: startupData.totalStartups,
+            activeStartups: startupData.activeStartups,
+            totalApplications: appData.totalApplications,
+            totalAcceptedApplications: appData.acceptedApplications,
+            totalOpportunities: oppData.totalOpportunities,
+            activeOpportunities: oppData.activeOpportunities,
+            totalFundingRaised: payData.totalFundingRaised,
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching public stats:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to retrieve public statistics",
+          details: error.message,
+        });
       }
     });
 
