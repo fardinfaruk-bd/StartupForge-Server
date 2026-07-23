@@ -34,12 +34,72 @@ async function run() {
     const applicationCollection = database.collection("application");
     const plansCollection = database.collection("plans");
     const paymentCollection = database.collection("payment");
+    const sessionCollection = database.collection("session");
 
-    app.get("/api/users", async (req, res) => {
-      const result = await userCollection.find().skip(2).toArray();
-      res.send(result);
-    });
+    const verifyToken = async (req, res, next) => {
+      const authHeader = req.headers?.authorization;
+      if (!authHeader) {
+        return res.status(401).send({ message: "Unauthorized access" });
+      }
+      const token = authHeader.split(" ")[1];
+      if (!token) {
+        return res.status(401).send({ message: "Unauthorized access" });
+      }
+      const query = { token: token };
+      const session = await sessionCollection.findOne(query);
+      if (!session) {
+        return res.status(401).send({ message: "Unauthorized access" });
+      }
+      const userId = session.userId;
+      const userQuery = { _id: userId };
+      const user = await userCollection.findOne(userQuery);
+      if (!user) {
+        return res.status(401).send({ message: "Unauthorized access" });
+      }
 
+      req.user = user;
+      next();
+    };
+
+    const verifyContributor = async (req, res, next) => {
+      if (req.user?.role !== "contributor") {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
+    const verifyAdmin = async (req, res, next) => {
+      if (req.user?.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
+
+    const verifyFounder = async (req, res, next) => {
+      if (req.user?.role !== "founder") {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+      next();
+    };
+    const verifyFounderOrAdmin = (req, res, next) => {
+      const role = req.user?.role;
+      if (role === "founder" || role === "admin") {
+        return next();
+      }
+      return res.status(403).send({
+        message: "Forbidden: Access restricted to Founders or Admins only",
+      });
+    };
+    const verifyContributorOrFounder = (req, res, next) => {
+      const role = req.user?.role;
+      if (role === "contributor" || role === "founder") {
+        return next();
+      }
+      return res.status(403).send({
+        message: "Forbidden: Access restricted to Founders or Admins only",
+      });
+    };
+
+    // user related Api
     app.get("/api/users/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -47,7 +107,7 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/api/users/:id", async (req, res) => {
+    app.patch("/api/users/:id", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const updatedUser = req.body;
 
@@ -61,7 +121,7 @@ async function run() {
 
     //opportunities related Api
     app.get("/api/opportunities", async (req, res) => {
-      console.log("server side q", req.query);
+      // console.log("server side q", req.query);
       const query = {};
       if (req.query.search) {
         query.$or = [
@@ -115,29 +175,38 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/manage/opportunities", async (req, res) => {
-      const query = {};
-      if (req.query.startupId) {
-        query.startupId = req.query.startupId;
-      }
-      if (req.query.status) {
-        query.status = req.query.status;
-      }
-      const result = await opportunitiesCollection.find(query).toArray();
-      res.send(result);
-    });
+    // app.get("/api/manage/opportunities", async (req, res) => {
+    //   const query = {};
+    //   if (req.query.startupId) {
+    //     query.startupId = req.query.startupId;
+    //   }
+    //   if (req.query.status) {
+    //     query.status = req.query.status;
+    //   }
+    //   const result = await opportunitiesCollection.find(query).toArray();
+    //   res.send(result);
+    // });
 
-    app.get("/api/my/opportunities", async (req, res) => {
-      const query = {};
-      if (req.query.founderId) {
-        query.founderId = req.query.founderId;
-      }
-      const result = await opportunitiesCollection.find(query).toArray();
-      res.send(result);
-    });
+    app.get(
+      "/api/my/opportunities",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        const query = {};
+        if (req.query.founderId) {
+          query.founderId = req.query.founderId;
+          if (req.user._id.toString() !== req.query.founderId) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
+        }
+        const result = await opportunitiesCollection.find(query).toArray();
+        res.send(result);
+      },
+    );
 
-    app.get("/api/opportunities/:id", async (req, res) => {
+    app.get("/api/opportunities/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
+
       if (id.length !== 24) {
         return res.json({ ok: false });
       }
@@ -149,34 +218,52 @@ async function run() {
       res.json(result);
     });
 
-    app.post("/api/opportunities", async (req, res) => {
-      const opportunity = req.body;
-      const result = await opportunitiesCollection.insertOne(opportunity);
-      res.send(result);
-    });
+    app.post(
+      "/api/opportunities",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        const opportunity = req.body;
+        const result = await opportunitiesCollection.insertOne(opportunity);
+        res.send(result);
+      },
+    );
 
-    app.patch("/api/opportunities/:id", async (req, res) => {
-      const { id } = req.params;
-      const updatedOpportunity = req.body;
+    app.patch(
+      "/api/opportunities/:id",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        const { id } = req.params;
+        const updatedOpportunity = req.body;
 
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: updatedOpportunity,
-      };
-      const result = await opportunitiesCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: updatedOpportunity,
+        };
+        const result = await opportunitiesCollection.updateOne(
+          query,
+          updateDoc,
+        );
+        res.send(result);
+      },
+    );
 
-    app.delete("/api/opportunities/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await opportunitiesCollection.deleteOne(query);
-      res.send(result);
-    });
+    app.delete(
+      "/api/opportunities/:id",
+      verifyToken,
+      verifyFounderOrAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await opportunitiesCollection.deleteOne(query);
+        res.send(result);
+      },
+    );
 
     //startup related Api
     app.get("/api/startups", async (req, res) => {
-      console.log("server side q", req.query);
+      // console.log("server side q", req.query);
       const query = {};
       if (req.query.search) {
         query.$or = [
@@ -206,14 +293,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/active/startups", async (req, res) => {
-      const result = await startupCollection
-        .find({ status: "Active" })
-        .toArray();
-      res.send(result);
-    });
-
-    app.get("/api/startups/:id", async (req, res) => {
+    app.get("/api/startups/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       if (id.length !== 24) {
         return res.json({ ok: false });
@@ -231,17 +311,20 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/api/my/startup", async (req, res) => {
+    app.get("/api/my/startup", verifyToken, verifyFounder, async (req, res) => {
       const query = {};
       if (req.query.founderId) {
         query.founderId = req.query.founderId;
+        if (req.user._id.toString() !== req.query.founderId) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
       }
       const result = await startupCollection.findOne(query);
 
       res.send(result || {});
     });
 
-    app.post("/api/startup", async (req, res) => {
+    app.post("/api/startup", verifyToken, verifyFounder, async (req, res) => {
       const startup = req.body;
       const newStartup = {
         ...startup,
@@ -251,78 +334,114 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/api/startup/:id", async (req, res) => {
-      const { id } = req.params;
-      const updatedStartup = req.body;
+    app.patch(
+      "/api/startup/:id",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        const { id } = req.params;
+        const updatedStartup = req.body;
 
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: updatedStartup,
-      };
-      const result = await startupCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: updatedStartup,
+        };
+        const result = await startupCollection.updateOne(query, updateDoc);
+        res.send(result);
+      },
+    );
 
-    app.patch("/api/startup/status/:id", async (req, res) => {
-      const id = req.params.id;
-      const updatedStatus = req.body;
-
-      const query = { _id: new ObjectId(id) };
-      const updateDoc = {
-        $set: {
-          status: updatedStatus.status,
-        },
-      };
-      const result = await startupCollection.updateOne(query, updateDoc);
-      res.send(result);
-    });
-
-    //application related Api
-    app.get("/api/applications", async (req, res) => {
-      const query = {};
-      if (req.query.opportunityId) {
-        query.opportunityId = req.query.opportunityId;
-      }
-      if (req.query.applicantId) {
-        query.applicantId = req.query.applicantId;
-      }
-      if (req.query.founderId) {
-        query.founderId = req.query.founderId;
-      }
-      const result = await applicationCollection.find(query).toArray();
-      res.send(result);
-    });
-    app.post("/api/applications", async (req, res) => {
-      const application = req.body;
-      const newApplication = {
-        ...application,
-        applied_at: new Date(),
-      };
-      const result = await applicationCollection.insertOne(newApplication);
-      res.send(result);
-    });
-
-    app.patch("/api/applications/:id", async (req, res) => {
-      try {
+    app.patch(
+      "/api/startup/status/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
         const id = req.params.id;
-        const updatedApplication = req.body;
-        const filter = { _id: new ObjectId(id) };
+        const updatedStatus = req.body;
 
+        const query = { _id: new ObjectId(id) };
         const updateDoc = {
           $set: {
-            Status: updatedApplication.status,
+            status: updatedStatus.status,
           },
         };
-
-        const result = await applicationCollection.updateOne(filter, updateDoc);
+        const result = await startupCollection.updateOne(query, updateDoc);
         res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: "Failed to update application" });
-      }
-    });
+      },
+    );
+
+    //application related Api
+    app.get(
+      "/api/applications",
+      verifyToken,
+      verifyContributorOrFounder,
+      async (req, res) => {
+        const query = {};
+        if (req.query.opportunityId) {
+          query.opportunityId = req.query.opportunityId;
+        }
+        if (req.query.applicantId) {
+          query.applicantId = req.query.applicantId;
+          if (req.user._id.toString() !== req.query.applicantId) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
+        }
+
+        if (req.query.founderId) {
+          query.founderId = req.query.founderId;
+          if (req.user._id.toString() !== req.query.founderId) {
+            return res.status(403).send({ message: "forbidden access" });
+          }
+        }
+        const result = await applicationCollection.find(query).toArray();
+        res.send(result);
+      },
+    );
+
+    app.post(
+      "/api/applications",
+      verifyToken,
+      verifyContributor,
+      async (req, res) => {
+        const application = req.body;
+        const newApplication = {
+          ...application,
+          applied_at: new Date(),
+        };
+        const result = await applicationCollection.insertOne(newApplication);
+        res.send(result);
+      },
+    );
+
+    app.patch(
+      "/api/applications/:id",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const updatedApplication = req.body;
+          const filter = { _id: new ObjectId(id) };
+
+          const updateDoc = {
+            $set: {
+              Status: updatedApplication.status,
+            },
+          };
+
+          const result = await applicationCollection.updateOne(
+            filter,
+            updateDoc,
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: "Failed to update application" });
+        }
+      },
+    );
 
     // plans related Api
-    app.get("/api/plans", async (req, res) => {
+    app.get("/api/plans", verifyToken, async (req, res) => {
       const query = {};
       if (req.query.plan_id) {
         query.id = req.query.plan_id;
@@ -332,11 +451,11 @@ async function run() {
     });
 
     //payment related Api
-    app.get("/api/payment", async (req, res) => {
+    app.get("/api/payment", verifyToken, verifyAdmin, async (req, res) => {
       const result = await paymentCollection.find().toArray();
       res.send(result);
     });
-    app.post("/api/payment", async (req, res) => {
+    app.post("/api/payment", verifyToken, verifyFounder, async (req, res) => {
       const payment = req.body;
       const newPayment = {
         ...payment,
@@ -356,173 +475,203 @@ async function run() {
 
     //aggregation related Api
 
-    app.get("/api/states", async (req, res) => {
-      try {
-        const { role, userId, email } = req.query;
+    const getDateRanges = () => {
+      const now = new Date();
+      const startOfCurrentMonth = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        1,
+      );
+      const startOfPreviousMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() - 1,
+        1,
+      );
+      const endOfPreviousMonth = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
 
-        if (!role) {
-          return res.status(400).json({ error: "Role is required" });
-        }
+      return { startOfCurrentMonth, startOfPreviousMonth, endOfPreviousMonth };
+    };
 
-        // Date Range Helpers
-        const now = new Date();
-        const startOfCurrentMonth = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          1,
-        );
-        const startOfPreviousMonth = new Date(
-          now.getFullYear(),
-          now.getMonth() - 1,
-          1,
-        );
-        const endOfPreviousMonth = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          0,
-          23,
-          59,
-          59,
-          999,
-        );
+    app.get(
+      "/api/stats/founder",
+      verifyToken,
+      verifyFounder,
+      async (req, res) => {
+        try {
+          const queryUserId = req.query.userId;
+          // Extract authenticated user ID attached by verifyToken
+          const authUserId = (req.user?._id || req.user?.id || "").toString();
 
-        if (role === "founder") {
-          if (!userId) {
+          // 1. Ensure parameters exist
+          if (!queryUserId) {
             return res
               .status(400)
-              .json({ error: "userId is required for founder stats" });
+              .json({ error: "Missing required 'userId' query parameter" });
           }
 
+          if (!authUserId) {
+            return res.status(401).json({ message: "Unauthorized access" });
+          }
+
+          // 2. Security Check: Founder can ONLY fetch their own stats (Fixed .toString capitalization)
+          if (queryUserId.toString() !== authUserId) {
+            return res.status(403).json({ message: "Forbidden access" });
+          }
+
+          const {
+            startOfCurrentMonth,
+            startOfPreviousMonth,
+            endOfPreviousMonth,
+          } = getDateRanges();
+
+          // 3. Validate MongoDB ObjectId format
           let userObjId;
           try {
-            userObjId = new ObjectId(userId);
+            userObjId = new ObjectId(queryUserId);
           } catch (err) {
             return res.status(400).json({ error: "Invalid userId format" });
           }
 
+          // Fetch user and plan details
           const user = await userCollection.findOne({ _id: userObjId });
           const planDetails = await plansCollection.findOne({
             id: user?.plan || "founder_free",
           });
 
-          const opportunityStats = await opportunitiesCollection
-            .aggregate([
-              { $match: { founderId: userId } },
-              {
-                $group: {
-                  _id: null,
-                  totalOpportunities: { $sum: 1 },
-                  activeOpportunities: {
-                    $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] },
-                  },
-                },
-              },
-            ])
-            .toArray();
+          // Match either String or ObjectId founderId in database
+          const founderMatchCondition = {
+            $or: [{ founderId: String(queryUserId) }, { founderId: userObjId }],
+          };
 
-          const applicationStats = await applicationCollection
-            .aggregate([
-              { $match: { founderId: userId } },
-              {
-                $group: {
-                  _id: null,
-                  totalApplications: { $sum: 1 },
-                  acceptedApplications: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$Status", "$status"] } },
-                            ["accepted", "approved"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  rejectedApplications: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$Status", "$status"] } },
-                            ["rejected", "declined"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  pendingApplications: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$Status", "$status"] } },
-                            ["pending", "submitted"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  applicationsThisMonth: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $gte: [
-                            {
-                              $toDate: {
-                                $ifNull: ["$applied_at", "$appliedAt"],
-                              },
-                            },
-                            startOfCurrentMonth,
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  applicationsPreviousMonth: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $and: [
-                            {
-                              $gte: [
-                                {
-                                  $toDate: {
-                                    $ifNull: ["$applied_at", "$appliedAt"],
-                                  },
-                                },
-                                startOfPreviousMonth,
-                              ],
-                            },
-                            {
-                              $lte: [
-                                {
-                                  $toDate: {
-                                    $ifNull: ["$applied_at", "$appliedAt"],
-                                  },
-                                },
-                                endOfPreviousMonth,
-                              ],
-                            },
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
+          // Run parallel aggregation queries
+          const [opportunityStats, applicationStats] = await Promise.all([
+            opportunitiesCollection
+              .aggregate([
+                { $match: founderMatchCondition },
+                {
+                  $group: {
+                    _id: null,
+                    totalOpportunities: { $sum: 1 },
+                    activeOpportunities: {
+                      $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] },
                     },
                   },
                 },
-              },
-            ])
-            .toArray();
+              ])
+              .toArray(),
+
+            applicationCollection
+              .aggregate([
+                { $match: founderMatchCondition },
+                {
+                  $group: {
+                    _id: null,
+                    totalApplications: { $sum: 1 },
+                    acceptedApplications: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $in: [
+                              { $toLower: { $ifNull: ["$Status", "$status"] } },
+                              ["accepted", "approved"],
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                    rejectedApplications: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $in: [
+                              { $toLower: { $ifNull: ["$Status", "$status"] } },
+                              ["rejected", "declined"],
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                    pendingApplications: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $in: [
+                              { $toLower: { $ifNull: ["$Status", "$status"] } },
+                              ["pending", "submitted"],
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                    applicationsThisMonth: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $gte: [
+                              {
+                                $toDate: {
+                                  $ifNull: ["$applied_at", "$appliedAt"],
+                                },
+                              },
+                              startOfCurrentMonth,
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                    applicationsPreviousMonth: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $and: [
+                              {
+                                $gte: [
+                                  {
+                                    $toDate: {
+                                      $ifNull: ["$applied_at", "$appliedAt"],
+                                    },
+                                  },
+                                  startOfPreviousMonth,
+                                ],
+                              },
+                              {
+                                $lte: [
+                                  {
+                                    $toDate: {
+                                      $ifNull: ["$applied_at", "$appliedAt"],
+                                    },
+                                  },
+                                  endOfPreviousMonth,
+                                ],
+                              },
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                  },
+                },
+              ])
+              .toArray(),
+          ]);
 
           const opps = opportunityStats[0] || {
             totalOpportunities: 0,
@@ -539,199 +688,266 @@ async function run() {
 
           const maxAllowed = planDetails?.maxOpportunities || 3;
 
-          const stats = {
-            totalOpportunities: opps.totalOpportunities,
-            activeOpportunities: opps.activeOpportunities,
-            totalApplications: apps.totalApplications,
-            acceptedApplications: apps.acceptedApplications,
-            rejectedApplications: apps.rejectedApplications,
-            pendingApplications: apps.pendingApplications,
-            applicationsThisMonth: apps.applicationsThisMonth,
-            applicationsPreviousMonth: apps.applicationsPreviousMonth,
-            plan: user?.plan || "founder_free",
-            maxOpportunities: maxAllowed,
-            remainingOpportunities: Math.max(
-              0,
-              maxAllowed - opps.totalOpportunities,
-            ),
-          };
-
-          return res.status(200).json({ success: true, role, stats });
-        }
-
-        // APPLICANT / CONTRIBUTOR STATS
-
-        if (role === "contributor") {
-          if (!userId && !email) {
-            return res.status(400).json({
-              error: "userId or email is required for applicant stats",
-            });
-          }
-
-          const matchCriteria = [];
-          if (userId) matchCriteria.push({ applicantId: userId });
-          if (email) matchCriteria.push({ Applicant_email: email });
-
-          const applicantStats = await applicationCollection
-            .aggregate([
-              { $match: { $or: matchCriteria } },
-              {
-                $group: {
-                  _id: null,
-                  totalApplied: { $sum: 1 },
-                  accepted: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$status", "$Status"] } },
-                            ["accepted", "approved"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  rejected: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$status", "$Status"] } },
-                            ["rejected", "declined"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  pending: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $in: [
-                            { $toLower: { $ifNull: ["$status", "$Status"] } },
-                            ["pending", "submitted"],
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  totalApplicationInThisMonth: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $gte: [
-                            {
-                              $toDate: {
-                                $ifNull: ["$applied_at", "$appliedAt"],
-                              },
-                            },
-                            startOfCurrentMonth,
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  totalApplicationProviousMonth: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $and: [
-                            {
-                              $gte: [
-                                {
-                                  $toDate: {
-                                    $ifNull: ["$applied_at", "$appliedAt"],
-                                  },
-                                },
-                                startOfPreviousMonth,
-                              ],
-                            },
-                            {
-                              $lte: [
-                                {
-                                  $toDate: {
-                                    $ifNull: ["$applied_at", "$appliedAt"],
-                                  },
-                                },
-                                endOfPreviousMonth,
-                              ],
-                            },
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                  totalApplicationOtherMonth: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $lt: [
-                            {
-                              $toDate: {
-                                $ifNull: ["$applied_at", "$appliedAt"],
-                              },
-                            },
-                            startOfPreviousMonth,
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-                },
-              },
-              {
-                $project: {
-                  _id: 0,
-                  totalApplied: 1,
-                  accepted: 1,
-                  rejected: 1,
-                  pending: 1,
-                  totalApplicationInThisMonth: 1,
-                  totalApplicationProviousMonth: 1,
-                  totalApplicationOtherMonth: 1,
-                },
-              },
-            ])
-            .toArray();
-
-          const stats = applicantStats[0] || {
-            totalApplied: 0,
-            accepted: 0,
-            rejected: 0,
-            pending: 0,
-            totalApplicationInThisMonth: 0,
-            totalApplicationProviousMonth: 0,
-            totalApplicationOtherMonth: 0,
-          };
-
-          return res.status(200).json({ success: true, role, stats });
-        }
-
-        // ADMIN STATS
-
-        if (role === "admin") {
-          const totalUsers = await userCollection.countDocuments();
-          const totalStartups = await startupCollection.countDocuments({
-            status: "approved",
+          return res.status(200).json({
+            success: true,
+            role: "founder",
+            stats: {
+              totalOpportunities: opps.totalOpportunities,
+              activeOpportunities: opps.activeOpportunities,
+              totalApplications: apps.totalApplications,
+              acceptedApplications: apps.acceptedApplications,
+              rejectedApplications: apps.rejectedApplications,
+              pendingApplications: apps.pendingApplications,
+              applicationsThisMonth: apps.applicationsThisMonth,
+              applicationsPreviousMonth: apps.applicationsPreviousMonth,
+              plan: user?.plan || "founder_free",
+              maxOpportunities: maxAllowed,
+              remainingOpportunities: Math.max(
+                0,
+                maxAllowed - opps.totalOpportunities,
+              ),
+            },
           });
-          const totalOpportunities =
-            await opportunitiesCollection.countDocuments({ status: "active" });
-          const totalApplications =
-            await applicationCollection.countDocuments();
+        } catch (error) {
+          console.error("Error generating founder metrics:", error);
+          return res
+            .status(500)
+            .json({ error: "Internal Server Error", details: error.message });
+        }
+      },
+    );
 
-          const userRegistrationData = await userCollection
+    app.get("/api/stats/contributor", verifyToken, verifyContributor, async (req, res) => {
+      try {
+        const queryUserId = req.query.userId;
+
+        const rawAuthId = req.user?._id || req.user?.id || req.user?.userId || req.user?.sub;
+        const authUserId = rawAuthId ? rawAuthId.toString() : "";
+        const email = req.user?.email;
+
+        if (!queryUserId) {
+          return res
+            .status(400)
+            .json({ error: "Missing required 'userId' query parameter" });
+        }
+
+        if (!authUserId) {
+          console.error(
+            "verifyToken attached user object but missing ID:",
+            req.user,
+          );
+          return res
+            .status(401)
+            .json({ message: "Unauthorized access: Invalid token payload" });
+        }
+
+        if (queryUserId.toString() !== authUserId) {
+          return res.status(403).json({ message: "Forbidden access" });
+        }
+
+        const {
+          startOfCurrentMonth,
+          startOfPreviousMonth,
+          endOfPreviousMonth,
+        } = getDateRanges();
+
+        // 4. Construct match criteria safely
+        const matchCriteria = [];
+
+        if (authUserId) {
+          matchCriteria.push({ applicantId: authUserId });
+
+          // Also match as ObjectId if stored natively in Mongo
+          if (ObjectId.isValid(authUserId)) {
+            matchCriteria.push({ applicantId: new ObjectId(authUserId) });
+          }
+        }
+
+        if (email) {
+          matchCriteria.push({ Applicant_email: email });
+          matchCriteria.push({ applicant_email: email });
+        }
+
+        if (matchCriteria.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "User identity missing from token" });
+        }
+
+        // 5. Run Aggregation Pipeline
+        const applicantStats = await applicationCollection
+          .aggregate([
+            { $match: { $or: matchCriteria } },
+            {
+              $group: {
+                _id: null,
+                totalApplied: { $sum: 1 },
+                accepted: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$status", "$Status"] } },
+                          ["accepted", "approved"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                rejected: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$status", "$Status"] } },
+                          ["rejected", "declined"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                pending: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          { $toLower: { $ifNull: ["$status", "$Status"] } },
+                          ["pending", "submitted"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                totalApplicationInThisMonth: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $gte: [
+                          {
+                            $toDate: { $ifNull: ["$applied_at", "$appliedAt"] },
+                          },
+                          startOfCurrentMonth,
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                totalApplicationProviousMonth: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          {
+                            $gte: [
+                              {
+                                $toDate: {
+                                  $ifNull: ["$applied_at", "$appliedAt"],
+                                },
+                              },
+                              startOfPreviousMonth,
+                            ],
+                          },
+                          {
+                            $lte: [
+                              {
+                                $toDate: {
+                                  $ifNull: ["$applied_at", "$appliedAt"],
+                                },
+                              },
+                              endOfPreviousMonth,
+                            ],
+                          },
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                totalApplicationOtherMonth: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $lt: [
+                          {
+                            $toDate: { $ifNull: ["$applied_at", "$appliedAt"] },
+                          },
+                          startOfPreviousMonth,
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                totalApplied: 1,
+                accepted: 1,
+                rejected: 1,
+                pending: 1,
+                totalApplicationInThisMonth: 1,
+                totalApplicationProviousMonth: 1,
+                totalApplicationOtherMonth: 1,
+              },
+            },
+          ])
+          .toArray();
+
+        const stats = applicantStats[0] || {
+          totalApplied: 0,
+          accepted: 0,
+          rejected: 0,
+          pending: 0,
+          totalApplicationInThisMonth: 0,
+          totalApplicationProviousMonth: 0,
+          totalApplicationOtherMonth: 0,
+        };
+
+        return res
+          .status(200)
+          .json({ success: true, role: "contributor", stats });
+      } catch (error) {
+        console.error("Error generating contributor metrics:", error);
+        return res
+          .status(500)
+          .json({ error: "Internal Server Error", details: error.message });
+      }
+    });
+
+    app.get("/api/stats/admin", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const {
+          startOfCurrentMonth,
+          startOfPreviousMonth,
+          endOfPreviousMonth,
+        } = getDateRanges();
+
+        const [
+          totalUsers,
+          totalStartups,
+          totalOpportunities,
+          totalApplications,
+          userRegistrationData,
+          revenueData,
+        ] = await Promise.all([
+          userCollection.countDocuments(),
+          startupCollection.countDocuments({ status: "approved" }),
+          opportunitiesCollection.countDocuments({ status: "active" }),
+          applicationCollection.countDocuments(),
+
+          userCollection
             .aggregate([
               {
                 $group: {
@@ -777,9 +993,9 @@ async function run() {
                 },
               },
             ])
-            .toArray();
+            .toArray(),
 
-          const revenueData = await paymentCollection
+          paymentCollection
             .aggregate([
               {
                 $group: {
@@ -826,38 +1042,36 @@ async function run() {
                 },
               },
             ])
-            .toArray();
+            .toArray(),
+        ]);
 
-          const usersMeta = userRegistrationData[0] || {
-            registeredThisMonth: 0,
-            registeredPreviousMonth: 0,
-          };
-          const revMeta = revenueData[0] || {
-            totalRevenue: 0,
-            revenueThisMonth: 0,
-            revenuePreviousMonth: 0,
-          };
+        const usersMeta = userRegistrationData[0] || {
+          registeredThisMonth: 0,
+          registeredPreviousMonth: 0,
+        };
+        const revMeta = revenueData[0] || {
+          totalRevenue: 0,
+          revenueThisMonth: 0,
+          revenuePreviousMonth: 0,
+        };
 
-          return res.status(200).json({
-            success: true,
-            role,
-            stats: {
-              totalUsers,
-              registeredUsersThisMonth: usersMeta.registeredThisMonth,
-              registeredUsersPreviousMonth: usersMeta.registeredPreviousMonth,
-              totalStartups,
-              totalOpportunities,
-              totalApplications,
-              totalRevenue: revMeta.totalRevenue,
-              revenueThisMonth: revMeta.revenueThisMonth,
-              revenuePreviousMonth: revMeta.revenuePreviousMonth,
-            },
-          });
-        }
-
-        return res.status(400).json({ error: "Invalid role provided" });
+        return res.status(200).json({
+          success: true,
+          role: "admin",
+          stats: {
+            totalUsers,
+            registeredUsersThisMonth: usersMeta.registeredThisMonth,
+            registeredUsersPreviousMonth: usersMeta.registeredPreviousMonth,
+            totalStartups,
+            totalOpportunities,
+            totalApplications,
+            totalRevenue: revMeta.totalRevenue,
+            revenueThisMonth: revMeta.revenueThisMonth,
+            revenuePreviousMonth: revMeta.revenuePreviousMonth,
+          },
+        });
       } catch (error) {
-        console.error("Error generating state metrics:", error);
+        console.error("Error generating admin metrics:", error);
         return res
           .status(500)
           .json({ error: "Internal Server Error", details: error.message });
